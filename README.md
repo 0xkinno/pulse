@@ -21,11 +21,12 @@ Not a trading bot. Not a chart. A risk cockpit for DeepBook Predict.
 
 | Resource | Link |
 |---|---|
-| **Live App** | _add your Vercel URL after deploy_ |
+| **Live App** | _https://pulse-iota-kohl.vercel.app/_ |
 | **GitHub** | https://github.com/0xkinno/pulse |
 | **DeepBook Predict Package** | [View on Suiscan](https://suiscan.xyz/testnet/object/0xf5ea2b3749c65d6e56507cc35388719aadb28f9cab873696a2f8687f5c785138) |
+| **Video Demo** | https://youtu.be/Nov-utqtFN0?si=jY0hWrVpage3Wrl7 |
 | **Network** | Sui Testnet |
-| **Submission** | _add your DeepSurge submission link_ |
+| **Submission** | _https://www.deepsurge.xyz/projects/4af78267-fb63-472c-ad25-a7058bbd33a3_ |
 
 ---
 
