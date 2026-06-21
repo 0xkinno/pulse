@@ -33,10 +33,15 @@ export const PREDICT_EVENT_TYPES = {
 
 export const SUI_TESTNET_RPC = 'https://fullnode.testnet.sui.io:443';
 
-// Risk Guardian thresholds — deterministic, on-chain-mirrored config.
-// These map 1:1 to what the Move-side guardian module checks before allowing a mint/redeem.
+// Risk Guardian thresholds — deterministic scoring config computed entirely
+// in the frontend. IMPORTANT: these do NOT mirror any actual on-chain check.
+// The real Move contract (predict::mint) only checks oracle LIFECYCLE state
+// via oracle_config::assert_live_oracle (active vs settled vs inactive), not
+// how recently a price tick arrived. Testnet oracles can legitimately go
+// quiet for hours between updates without being unsafe to trade against —
+// staleness here is a soft UI signal, not a real safety boundary.
 export const RISK_THRESHOLDS = {
-  maxOracleStalenessSec: 90, // beyond this, surface is considered stale
+  maxOracleStalenessSec: 3600, // beyond this, freshness score starts rising — informational, not a hard block on its own
   maxVaultUtilizationPct: 78, // mirrors max_total_exposure_pct guard rail
   butterflyArbToleranceBps: 15, // SVI convexity violation tolerance
   calendarArbToleranceBps: 10, // cross-expiry monotonicity tolerance

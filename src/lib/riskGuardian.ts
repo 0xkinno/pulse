@@ -44,19 +44,23 @@ export function assessRisk(inputs: GuardianInputs): RiskAssessment {
   const factors: RiskFactor[] = [];
   const blockers: string[] = [];
 
-  // Factor 1: Oracle freshness
+  // Factor 1: Oracle freshness — informational only. The real on-chain
+  // mint check (assert_live_oracle) cares about lifecycle state, not tick
+  // recency, so staleness alone never blocks a real transaction here —
+  // it only raises the score and shows a plain-language warning.
   const stalenessRatio = inputs.oracleAgeSeconds / RISK_THRESHOLDS.maxOracleStalenessSec;
   const freshnessScore = Math.min(100, Math.max(0, stalenessRatio * 100));
+  const staleHours = inputs.oracleAgeSeconds / 3600;
   factors.push({
     key: 'freshness',
     label: 'Oracle freshness',
     value: freshnessScore,
     status: levelFromScore(freshnessScore),
-    detail: `Last update ${inputs.oracleAgeSeconds}s ago (limit ${RISK_THRESHOLDS.maxOracleStalenessSec}s)`,
+    detail:
+      staleHours >= 1
+        ? `Last update ${staleHours.toFixed(1)}h ago — testnet oracles can go quiet for hours; this does not block minting on-chain`
+        : `Last update ${Math.round(inputs.oracleAgeSeconds)}s ago`,
   });
-  if (inputs.oracleAgeSeconds > RISK_THRESHOLDS.maxOracleStalenessSec * 2) {
-    blockers.push('Oracle feed stale beyond safe threshold — mint blocked');
-  }
 
   // Factor 2: Vault utilization
   const utilScore = Math.min(

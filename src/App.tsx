@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { usePulseFeed } from './hooks/usePulseFeed';
+import { useSurfaceHistory } from './hooks/useSurfaceHistory';
 import { useKeeperFeed } from './hooks/useKeeperFeed';
 import { LandingPage } from './components/LandingPage';
 import { Navbar, type Tab } from './components/Navbar';
@@ -9,6 +10,8 @@ import { RiskGuardianPanel } from './components/RiskGuardianPanel';
 import { VaultPanel } from './components/VaultPanel';
 import { KeeperFeedPanel } from './components/KeeperFeedPanel';
 import { TradePanel } from './components/TradePanel';
+import { RedeemPanel } from './components/RedeemPanel';
+import { SupplyLiquidityPanel } from './components/SupplyLiquidityPanel';
 import './styles/pulse.css';
 
 export default function App() {
@@ -16,6 +19,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('surface');
 
   const { oracles, vault, slices, violations, risk, isLive, loading } = usePulseFeed();
+  const surfaceHistory = useSurfaceHistory(slices);
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null); // null = live, follow latest tick
   const keeperEvents = useKeeperFeed();
 
   if (!showDashboard) {
@@ -53,8 +58,41 @@ export default function App() {
             {loading ? (
               <div className="surface-viz surface-viz--loading">Calibrating surface...</div>
             ) : (
-              <SurfaceViz slices={slices} violationCount={violations.length} />
+              <SurfaceViz
+                slices={scrubIndex !== null && surfaceHistory[scrubIndex] ? surfaceHistory[scrubIndex].slices : slices}
+                violationCount={violations.length}
+              />
             )}
+            <div className="surface-scrubber">
+              <div className="surface-scrubber__top">
+                <span className="surface-scrubber__label mono">
+                  {scrubIndex === null
+                    ? 'Live'
+                    : surfaceHistory[scrubIndex]
+                      ? new Date(surfaceHistory[scrubIndex].timestampMs).toLocaleTimeString()
+                      : '—'}
+                </span>
+                {scrubIndex !== null && (
+                  <button className="surface-scrubber__live-btn" onClick={() => setScrubIndex(null)}>
+                    Jump to live
+                  </button>
+                )}
+              </div>
+              <input
+                type="range"
+                className="surface-scrubber__slider"
+                min={0}
+                max={Math.max(0, surfaceHistory.length - 1)}
+                value={scrubIndex === null ? Math.max(0, surfaceHistory.length - 1) : scrubIndex}
+                onChange={(e) => setScrubIndex(Number(e.target.value))}
+                disabled={surfaceHistory.length < 2}
+              />
+              <div className="surface-scrubber__hint mono">
+                {surfaceHistory.length < 2
+                  ? 'Recording surface ticks — replay fills in as the page stays open'
+                  : `Replaying this session's last ${surfaceHistory.length} ticks (~${Math.round((surfaceHistory.length * 4) / 60)} min)`}
+              </div>
+            </div>
             <div className="surface-oracle-grid">
               {oracles.map((o) => (
                 <div key={o.oracleId} className="oracle-card">
@@ -83,6 +121,9 @@ export default function App() {
             <div className="tab-view__trade-layout">
               <TradePanel oracles={oracles} risk={risk} />
               <RiskGuardianPanel risk={risk} />
+            </div>
+            <div className="tab-view__trade-layout" style={{ marginTop: 22 }}>
+              <RedeemPanel />
             </div>
           </div>
         )}
@@ -153,6 +194,9 @@ export default function App() {
                   ))}
                 </div>
               </div>
+            </div>
+            <div className="tab-view__vault-layout" style={{ marginTop: 22 }}>
+              <SupplyLiquidityPanel />
             </div>
           </div>
         )}
