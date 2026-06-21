@@ -31,6 +31,12 @@ export interface PulseState {
 }
 
 const POLL_INTERVAL_MS = 4000;
+// Absolute ceiling on how long the UI is allowed to show a loading state.
+// fetchOracles/fetchVaultSummary already resolve within their own timeouts and
+// always return usable data (real or simulated) — this watchdog exists purely
+// as a second line of defense so a future regression can never reproduce the
+// "stuck on Calibrating forever" bug again.
+const WATCHDOG_MS = 6000;
 
 export function usePulseFeed() {
   const [state, setState] = useState<PulseState>({
@@ -43,56 +49,79 @@ export function usePulseFeed() {
     lastTickAt: Date.now(),
     loading: true,
   });
+
   const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
 
     async function tick() {
       advanceSimClock();
-      const [oracleRes, vaultRes, statusRes] = await Promise.all([
-        fetchOracles(),
-        fetchVaultSummary(),
-        fetchServerStatus(),
-      ]);
-      if (!mountedRef.current) return;
 
-      const slices = oraclesToSurfaceSlices(oracleRes.oracles);
-      const kGrid = defaultKGrid();
-      const butterflyViolations = slices.flatMap((s) =>
-        scanButterflyViolations(s, kGrid, RISK_THRESHOLDS.butterflyArbToleranceBps),
-      );
-      const calendarViolations = scanCalendarViolations(
-        slices,
-        kGrid,
-        RISK_THRESHOLDS.calendarArbToleranceBps,
-      );
+      watchdog = setTimeout(() => {
+        if (!mountedRef.current) return;
+        // If a tick somehow never resolves, force loading off so the UI always
+        // shows *something* rather than spinning indefinitely.
+        setState((prev) => (prev.loading ? { ...prev, loading: false } : prev));
+      }, WATCHDOG_MS);
 
-      const nearestOracle = oracleRes.oracles[0];
-      const oracleAge = nearestOracle ? (Date.now() - nearestOracle.lastUpdateMs) / 1000 : 999;
+      try {
+        const [oracleRes, vaultRes, statusRes] = await Promise.all([
+          fetchOracles(),
+          fetchVaultSummary(),
+          fetchServerStatus(),
+        ]);
 
-      const risk = assessRisk({
-        oracleAgeSeconds: Math.max(0, oracleAge),
-        vaultUtilizationPct: vaultRes.vault.utilizationPct,
-        liquidityDepthScore: Math.max(
-          0,
-          Math.min(1, 1 - vaultRes.vault.utilizationPct / 100 + 0.15),
-        ),
-        butterflyViolations,
-        calendarViolations,
-        oracleStatus: nearestOracle?.status ?? 'inactive',
-      });
+        if (!mountedRef.current) return;
 
-      setState({
-        oracles: oracleRes.oracles,
-        vault: vaultRes.vault,
-        slices,
-        violations: [...butterflyViolations, ...calendarViolations],
-        risk,
-        isLive: oracleRes.live && vaultRes.live && statusRes.live,
-        lastTickAt: Date.now(),
-        loading: false,
-      });
+        const slices = oraclesToSurfaceSlices(oracleRes.oracles);
+        const kGrid = defaultKGrid();
+
+        const butterflyViolations = slices.flatMap((s) =>
+          scanButterflyViolations(s, kGrid, RISK_THRESHOLDS.butterflyArbToleranceBps),
+        );
+        const calendarViolations = scanCalendarViolations(
+          slices,
+          kGrid,
+          RISK_THRESHOLDS.calendarArbToleranceBps,
+        );
+
+        const nearestOracle = oracleRes.oracles[0];
+        const oracleAge = nearestOracle ? (Date.now() - nearestOracle.lastUpdateMs) / 1000 : 999;
+
+        const risk = assessRisk({
+          oracleAgeSeconds: Math.max(0, oracleAge),
+          vaultUtilizationPct: vaultRes.vault.utilizationPct,
+          liquidityDepthScore: Math.max(
+            0,
+            Math.min(1, 1 - vaultRes.vault.utilizationPct / 100 + 0.15),
+          ),
+          butterflyViolations,
+          calendarViolations,
+          oracleStatus: nearestOracle?.status ?? 'inactive',
+        });
+
+        setState({
+          oracles: oracleRes.oracles,
+          vault: vaultRes.vault,
+          slices,
+          violations: [...butterflyViolations, ...calendarViolations],
+          risk,
+          isLive: oracleRes.live && vaultRes.live && statusRes.live,
+          lastTickAt: Date.now(),
+          loading: false,
+        });
+      } catch {
+        // Should be unreachable (fetchOracles/fetchVaultSummary never throw),
+        // but if anything upstream changes and starts throwing, never leave
+        // the UI stuck — fall through to false so the next tick can recover.
+        if (mountedRef.current) {
+          setState((prev) => ({ ...prev, loading: false }));
+        }
+      } finally {
+        clearTimeout(watchdog);
+      }
     }
 
     tick();
@@ -100,6 +129,7 @@ export function usePulseFeed() {
     return () => {
       mountedRef.current = false;
       clearInterval(id);
+      clearTimeout(watchdog);
     };
   }, []);
 

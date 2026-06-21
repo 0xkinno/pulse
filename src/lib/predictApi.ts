@@ -24,6 +24,16 @@ export interface VaultSummary {
   plpSharePrice: number;
 }
 
+/**
+ * Fetches a path against the live server. Hardened against every failure mode
+ * that previously caused the surface to get stuck on an empty/loading state:
+ *   - network error / CORS block        -> caught, falls back
+ *   - timeout                            -> aborted, falls back
+ *   - non-2xx response                   -> caught, falls back
+ *   - malformed / unexpected JSON shape  -> caught by caller's normalizer, falls back
+ *   - response resolves but is empty     -> caller's normalizer falls back
+ * This function NEVER throws and NEVER hangs past `timeoutMs`.
+ */
 async function safeFetch<T>(
   path: string,
   fallback: T,
@@ -42,8 +52,9 @@ async function safeFetch<T>(
   }
 }
 
-// ---- Deterministic simulated feed (used whenever the live testnet server is unreachable) ----
-// This is clearly labeled as simulated everywhere it surfaces in the UI — see `live` flag.
+// ---- Deterministic simulated feed (used whenever the live testnet server is unreachable,
+// returns an unexpected shape, or returns an empty result) ----
+// This is clearly labeled as simulated everywhere it surfaces in the UI — see the `live` flag.
 
 let simTick = 0;
 
@@ -94,26 +105,60 @@ export function advanceSimClock() {
   simTick += 1;
 }
 
+/**
+ * Pulls every plausible shape the indexed server might return for the oracle list
+ * out of an unknown JSON payload. The live testnet server's exact response
+ * envelope isn't pinned down (docs show the endpoint, not a strict schema), so this
+ * normalizer is deliberately permissive rather than assuming one shape and silently
+ * returning an empty array — which was the root cause of the surface getting stuck
+ * on "0 expiries" indefinitely.
+ */
+function extractOracleArray(payload: unknown): OracleSummary[] {
+  if (Array.isArray(payload)) return payload as OracleSummary[];
+  if (payload && typeof payload === 'object') {
+    const obj = payload as Record<string, unknown>;
+    for (const key of ['oracles', 'data', 'items', 'results']) {
+      const candidate = obj[key];
+      if (Array.isArray(candidate)) return candidate as OracleSummary[];
+    }
+  }
+  return [];
+}
+
 export async function fetchOracles(): Promise<{ oracles: OracleSummary[]; live: boolean }> {
-  const { data, live } = await safeFetch<{ oracles?: OracleSummary[] } | OracleSummary[]>(
+  const { data, live } = await safeFetch<unknown>(
     `/predicts/${PREDICT_OBJECT_ID}/oracles`,
-    simulatedOracles(),
+    null,
   );
-  if (!live) return { oracles: data as OracleSummary[], live: false };
-  const normalized = Array.isArray(data) ? data : (data as { oracles?: OracleSummary[] }).oracles ?? [];
-  return { oracles: normalized.length ? normalized : simulatedOracles(), live: normalized.length > 0 };
+
+  if (live) {
+    const normalized = extractOracleArray(data);
+    if (normalized.length > 0) {
+      return { oracles: normalized, live: true };
+    }
+    // Live request succeeded but returned no usable oracle data (empty array,
+    // unexpected envelope, etc.) — fall back to the simulated feed rather than
+    // rendering an empty surface forever.
+  }
+
+  return { oracles: simulatedOracles(), live: false };
 }
 
 export async function fetchVaultSummary(): Promise<{ vault: VaultSummary; live: boolean }> {
-  const { data, live } = await safeFetch<VaultSummary>(
+  const { data, live } = await safeFetch<Partial<VaultSummary> | null>(
     `/predicts/${PREDICT_OBJECT_ID}/vault/summary`,
-    simulatedVault(),
+    null,
   );
-  return { vault: data, live };
+
+  if (live && data && typeof data.vaultBalance === 'number') {
+    return { vault: data as VaultSummary, live: true };
+  }
+
+  return { vault: simulatedVault(), live: false };
 }
 
 export async function fetchServerStatus(): Promise<{ ok: boolean; live: boolean }> {
-  const { live } = await safeFetch<{ ok: boolean }>('/status', { ok: false });
+  const { live } = await safeFetch<{ ok: boolean } | null>('/status', null);
   return { ok: live, live };
 }
 
