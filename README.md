@@ -144,6 +144,21 @@ A live stream of claim events — manager, oracle, payout, tip, tx digest — pr
 
 ---
 
+### Provide Liquidity Panel
+Supply dUSDC directly to the Predict vault via `predict::supply` and receive
+real PLP shares, or burn them back via `predict::withdraw`. Same verified
+transaction pattern as mint/redeem — no separate manager or oracle involved,
+just the shared vault, a coin, and the clock.
+
+### Time-Travel Surface Scrubber
+A slider beneath the live surface that replays this browser session's own
+recorded SVI snapshots — drag back to see how the surface looked moments
+ago, or jump back to live. Session-scoped by design: it doesn't depend on
+an unverified server history endpoint, it works immediately and correctly
+every time.
+
+---
+
 ## Risk Guardian — Factor Weights
 
 | Factor | Weight | Trigger for hard block |
@@ -160,16 +175,20 @@ All five factors and their thresholds live in one file (`src/lib/constants.ts` +
 
 ## What's live vs. simulated right now
 
-PULSE is built so a judge can tell the difference at a glance — every data source carries a `live` flag straight through to the UI (the ticker tape literally says `LIVE · TESTNET` or `SIMULATED FEED`).
+PULSE is built so a judge can tell the difference at a glance — every data
+source carries a `live` flag straight through to the UI (the ticker tape
+literally says `LIVE · TESTNET` or `SIMULATED FEED`).
 
 | Piece | Status |
 |---|---|
 | SVI math, arbitrage scanners, Risk Guardian scoring | **Real** — computed live off whatever oracle params are on screen, testnet or simulated |
-| Oracle + vault data | **Live when the testnet server responds**, falls back to a clearly-labeled simulated feed otherwise (expected without funded dUSDC) |
+| Oracle + vault data | **Live when the testnet server responds**, falls back to a clearly-labeled simulated feed otherwise (testnet oracles can go quiet for hours — expected on a hackathon deployment) |
 | Wallet connect | **Real** — `@mysten/dapp-kit`, signs with an actual Sui wallet |
-| Mint/redeem execution | **Stubbed** — the Guardian gating is fully wired, the PTB call to `predict::mint` is the next piece to land |
-| Settled-Redeem Keeper feed | **Simulated** — demonstrates the proof-of-life pattern a real off-chain keeper would follow |
-
+| Manager creation, deposit, mint, redeem, withdraw | **Real** — verified end-to-end on Sui testnet: `predict::create_manager`, `predict_manager::deposit`, `predict::mint`, `predict::redeem`, `predict_manager::withdraw`, all confirmed on Suiscan |
+| Supply / withdraw liquidity (PLP) | **Real** — `predict::supply` and `predict::withdraw` against the live vault, same verified pattern as mint/redeem |
+| Up/Down probability display | **Real** — derived from the same SVI surface math the protocol itself uses to price a binary position, shown as a Polymarket-style cents value |
+| Time-travel surface slider | **Real, session-scoped** — replays this browser session's own recorded surface ticks (not a query against the server's full historical archive) |
+| Settled-Redeem Keeper feed | **Simulated** — demonstrates the proof-of-life pattern a real always-on keeper would follow; a genuine always-on version needs a server-hosted process with its own funded key, which is the clear next step beyond this submission |
 ---
 
 ## Tech Stack
@@ -232,19 +251,27 @@ If that returns live data, PULSE's ticker tape will say `LIVE · TESTNET`. If it
 ```
 pulse/
 ├── src/
-│   ├── lib/
+│   │   ├── lib/
 │   │   ├── constants.ts        Testnet package IDs, risk thresholds
 │   │   ├── svi.ts              SVI surface math + arb scanners
 │   │   ├── riskGuardian.ts     5-factor deterministic risk scoring
-│   │   └── predictApi.ts       Server fetch + simulated feed fallback
+│   │   ├── predictApi.ts       Server fetch + simulated feed fallback
+│   │   ├── predictTx.ts        Real PTB builders: manager/deposit/mint/redeem/supply
+│   │   ├── onChainOracle.ts    Reads the real OracleSVI object directly from chain
+│   │   ├── positionLedger.ts   Remembers exactly which oracle each mint used
+│   │   └── probability.ts      Display-only Up/Down probability from SVI math
 │   ├── hooks/
 │   │   ├── usePulseFeed.ts     Polls server, runs math, builds risk state
+│   │   ├── usePredictManager.ts Creates/caches the wallet's PredictManager
+│   │   ├── useSurfaceHistory.ts Session-scoped surface snapshot history
 │   │   └── useKeeperFeed.ts    Simulated settled-redeem event stream
 │   ├── components/
 │   │   ├── SurfaceViz.tsx      Live SVI wireframe ribbon grid
 │   │   ├── RiskGuardianPanel.tsx
 │   │   ├── VaultPanel.tsx
+│   │   ├── SupplyLiquidityPanel.tsx  Real supply/withdraw liquidity flow
 │   │   ├── TradePanel.tsx
+│   │   ├── RedeemPanel.tsx
 │   │   ├── KeeperFeedPanel.tsx
 │   │   ├── TickerTape.tsx
 │   │   ├── WalletConnectButton.tsx
@@ -263,10 +290,12 @@ Every protocol building a structured-product or prediction-market UI on Sui hits
 
 **Post-hackathon roadmap:**
 
-1. **Live mint/redeem** — wire the Guardian-gated PTB calls against `predict::mint` / `predict::redeem`
-2. **Real keeper service** — replace the simulated feed with an off-chain worker watching `oracle::OracleSettled` and calling redeem on behalf of managers, earning the tip
-3. **Time-travel scrubber** — replay the surface using `/oracles/:id/svi` history
-4. **Guardian-as-a-library** — extract the risk scoring engine for other Sui oracle-driven protocols to embed directly
+1. **Real keeper service** — replace the session-scoped browser keeper with
+   an off-chain worker (e.g. Railway) holding its own funded key, watching
+   `oracle::OracleSettled`, and calling redeem on behalf of any manager,
+   earning a tip.
+2. **Guardian-as-a-library** — extract the risk scoring engine for other Sui
+   oracle-driven protocols to embed directly.
 
 ---
 
